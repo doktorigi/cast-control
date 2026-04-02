@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+cast_devices.json
+cast_current_image
+cast_server_out.txt
+cast_server_err.txt
+.env
