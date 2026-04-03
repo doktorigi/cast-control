@@ -612,7 +612,7 @@ SECURITY_HEADERS = {
 }
 
 # Endpoints that Cast devices need — no auth required
-PUBLIC_PATHS = {"/display", "/state", "/tts", "/image"}
+PUBLIC_PATHS = {"/", "/display", "/state", "/tts", "/image"}
 
 # ── HTTP handler ──────────────────────────────────────────────────────────────
 class Handler(BaseHTTPRequestHandler):
