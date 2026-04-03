@@ -53,6 +53,7 @@ VOICES = [
     ("en-GB-SoniaNeural",   "Sonia (UK Female)"),
     ("en-GB-RyanNeural",    "Ryan (UK Male)"),
     ("en-AU-NatashaNeural", "Natasha (AU Female)"),
+    ("en-IN-PrabhatNeural", "Prabhat (Indian Male)"),
 ]
 ALLOWED_VOICE_IDS = {v[0] for v in VOICES}
 
@@ -95,9 +96,15 @@ LOCAL_IP = detect_local_ip()
 
 # ── Scan subnets ──────────────────────────────────────────────────────────────
 def default_scan_subnets():
-    """Derive /24 subnets to scan from the local IP."""
-    prefix = ".".join(LOCAL_IP.split(".")[:3])
-    return [f"{prefix}.0/24"]
+    """Derive common /24 subnets to scan."""
+    # Based on README: scan 192.168.4.x, 192.168.5.x, 192.168.6.x
+    # Also include the current local subnet just in case it's different.
+    subnets = ["192.168.4.0/24", "192.168.5.0/24", "192.168.6.0/24"]
+    local_prefix = ".".join(LOCAL_IP.split(".")[:3])
+    local_subnet = f"{local_prefix}.0/24"
+    if local_subnet not in subnets:
+        subnets.append(local_subnet)
+    return subnets
 
 def get_scan_subnets():
     raw = os.environ.get("CAST_SUBNETS", "")
@@ -152,12 +159,15 @@ def cast_all(display_url, tts_url=None):
         try:
             cc = pychromecast.get_chromecast_from_host((ip, 8009, None, None, name))
             cc.wait(timeout=10)
-            cc.quit_app()
-            time.sleep(1)
-            if dtype == "speaker" and tts_url:
-                cc.media_controller.play_media(tts_url, "audio/mpeg")
-                cc.media_controller.block_until_active(timeout=10)
+            
+            if dtype == "speaker":
+                if tts_url:
+                    cc.quit_app() # ensure previous app is gone
+                    time.sleep(1)
+                    cc.media_controller.play_media(tts_url, "audio/mpeg")
+                    cc.media_controller.block_until_active(timeout=10)
             else:
+                # Always use DashCast for display devices
                 dash = DashCastController()
                 cc.register_handler(dash)
                 dash.load_url(display_url, force=True, reload_seconds=0)
@@ -169,6 +179,18 @@ def cast_all(display_url, tts_url=None):
     for t in threads: t.start()
     for t in threads: t.join()
     log.info("Cast complete (%d devices)", len(active))
+
+def stop_cast_device(d):
+    """Tell a single device to quit its current app."""
+    ip, name = d["ip"], d["name"]
+    try:
+        # Use a shorter timeout for stopping than for casting
+        cc = pychromecast.get_chromecast_from_host((ip, 8009, None, None, name))
+        cc.wait(timeout=5)
+        cc.quit_app()
+        log.info("STOP %s (%s)", name, ip)
+    except Exception as e:
+        log.warning("STOP FAIL %s: %s", name, e)
 
 # ── Network scanner ───────────────────────────────────────────────────────────
 MAX_SCAN_RESP = 4096   # max bytes read from each device info response
@@ -198,7 +220,7 @@ def run_scan():
         try:
             with sem:
                 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                sock.settimeout(0.4)
+                sock.settimeout(0.8)
                 open_ = sock.connect_ex((ip, 8009)) == 0
                 sock.close()
             if open_:
@@ -821,6 +843,9 @@ class Handler(BaseHTTPRequestHandler):
                     allowed["type"] = data["type"]
                 with devices_lock:
                     if 0 <= idx < len(devices):
+                        # If disabling, stop the cast
+                        if "enabled" in allowed and not allowed["enabled"] and devices[idx].get("enabled", True):
+                            threading.Thread(target=stop_cast_device, args=(devices[idx].copy(),), daemon=True).start()
                         devices[idx].update(allowed)
                         save_devices()
                 self._ok("application/json", b'{"status":"ok"}')
@@ -841,6 +866,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError
                 with devices_lock:
                     if 0 <= idx < len(devices):
+                        threading.Thread(target=stop_cast_device, args=(devices[idx].copy(),), daemon=True).start()
                         devices.pop(idx)
                         save_devices()
                 self._ok("application/json", b'{"status":"ok"}')
