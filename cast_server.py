@@ -159,15 +159,12 @@ def cast_all(display_url, tts_url=None):
         try:
             cc = pychromecast.get_chromecast_from_host((ip, 8009, None, None, name))
             cc.wait(timeout=10)
-            
-            if dtype == "speaker":
-                if tts_url:
-                    cc.quit_app() # ensure previous app is gone
-                    time.sleep(1)
-                    cc.media_controller.play_media(tts_url, "audio/mpeg")
-                    cc.media_controller.block_until_active(timeout=10)
+            cc.quit_app()
+            time.sleep(1)
+            if dtype == "speaker" and tts_url:
+                cc.media_controller.play_media(tts_url, "audio/mpeg")
+                cc.media_controller.block_until_active(timeout=10)
             else:
-                # Always use DashCast for display devices
                 dash = DashCastController()
                 cc.register_handler(dash)
                 dash.load_url(display_url, force=True, reload_seconds=0)
@@ -183,14 +180,20 @@ def cast_all(display_url, tts_url=None):
 def stop_cast_device(d):
     """Tell a single device to quit its current app."""
     ip, name = d["ip"], d["name"]
+    cc = None
     try:
-        # Use a shorter timeout for stopping than for casting
         cc = pychromecast.get_chromecast_from_host((ip, 8009, None, None, name))
-        cc.wait(timeout=5)
+        cc.wait(timeout=8)
         cc.quit_app()
         log.info("STOP %s (%s)", name, ip)
     except Exception as e:
         log.warning("STOP FAIL %s: %s", name, e)
+    finally:
+        if cc:
+            try:
+                cc.socket_client.stop()
+            except Exception:
+                pass
 
 # ── Network scanner ───────────────────────────────────────────────────────────
 MAX_SCAN_RESP = 4096   # max bytes read from each device info response
